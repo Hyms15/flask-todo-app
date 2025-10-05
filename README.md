@@ -1,3 +1,6 @@
+![CI Status](https://github.com/Hyms15/flask-todo-app/actions/workflows/ci.yml/badge.svg)
+
+
 🧩 Flask ToDo App – End-to-End Automation Project
 
 Built a full Flask ToDo App with CRUD APIs and SQLite backend.
