@@ -18,3 +18,19 @@ Implemented 20 Epics covering complete DevOps & automation workflow:
 🔟 End-to-End Demo & Documentation
 
 ✅ A collaborative project by a 4-member team — each epic implemented step-by-step to showcase modern DevOps + Python best practices.
+
+## 🐳 Docker Image
+
+This project is containerized using a **multi-stage Docker build** for optimized performance.
+
+### 🔹 Docker Hub Repository
+👉 [hyma1569/flask-todo-app](https://hub.docker.com/r/hyma1569/flask-todo-app)
+
+### 🔹 Available Tags
+- `v1.0.0`
+- `latest`
+
+### 🔹 How to Run Locally
+```bash
+docker pull hyma1569/flask-todo-app:v1.0.0
+docker run -p 5001:5000 hyma1569/flask-todo-app:v1.0.0
