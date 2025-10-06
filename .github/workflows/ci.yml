@@ -81,4 +81,4 @@ jobs:
       - name: Lint Dockerfile with Hadolint
         uses: hadolint/hadolint-action@v2
         with:
-          dockerfile: Dockerfile       
+          dockerfile: Dockerfile     
