@@ -70,10 +70,10 @@ jobs:
           echo "🚀 Running integration tests..."
           python -m pytest tests/integration --disable-warnings -q
           echo "✅ Integration tests completed with secrets securely accessed."
-docker-lint:
-    runs-on: ubuntu-latest
+        docker-lint:
+        runs-on: ubuntu-latest
 
-    steps:
+        steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
