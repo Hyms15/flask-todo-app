@@ -70,14 +70,15 @@ jobs:
           echo "🚀 Running integration tests..."
           python -m pytest tests/integration --disable-warnings -q
           echo "✅ Integration tests completed with secrets securely accessed."
-        docker-lint:
-        runs-on: ubuntu-latest
+  docker-lint:
+    runs-on: ubuntu-latest
+    needs: [integration-test]
 
-        steps:
+    steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Lint Dockerfile with Hadolint
         uses: hadolint/hadolint-action@v2
         with:
-          dockerfile: Dockerfile
+          dockerfile: Dockerfile       
