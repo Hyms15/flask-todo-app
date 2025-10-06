@@ -1,0 +1,4 @@
+ignored:
+  - DL3013  # Pip version pinning (already using requirements.txt)
+  - DL3042  # Pip cache warning (already using --no-cache-dir)
+  - DL3008  # Apt version pinning (optional for dev)
