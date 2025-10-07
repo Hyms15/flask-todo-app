@@ -52,3 +52,6 @@ This project is **containerized using a multi-stage Docker build** for optimized
 ```bash
 docker pull hyma1569/flask-todo-app:v1.0.0
 docker run -p 5001:5000 hyma1569/flask-todo-app:v1.0.0
+
+
+# This is to test wheather the image is getting build and moving to github container registry. 
