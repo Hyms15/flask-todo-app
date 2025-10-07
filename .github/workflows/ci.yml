@@ -126,15 +126,25 @@ jobs:
     permissions:
       contents: read
       security-events: write
+      packages: read   # ✅ allow GHCR image access
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # ✅ Correct Trivy setup action version
+      # ✅ Login to GHCR to allow Trivy to pull the image
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_TOKEN }}
+
+      # ✅ Install Trivy
       - name: Install Trivy
         uses: aquasecurity/setup-trivy@v0.2.2
 
+      # ✅ Run Trivy scan
       - name: Run Trivy vulnerability scanner
         env:
           OWNER: ${{ github.repository_owner }}
@@ -146,5 +156,5 @@ jobs:
           IMAGE_NAME=ghcr.io/${OWNER_LC}/flask-todo-app:${{ github.run_number }}
           echo "🔍 Scanning image: $IMAGE_NAME"
 
-          # Run Trivy scan
-          trivy image --exit-code 0 --severity HIGH,CRITICAL --vuln-type os,library --format table $IMAGE_NAME
+          # Run Trivy scan (pkg-types replaces deprecated vuln-type)
+          trivy image --exit-code 0 --pkg-types os,library --severity HIGH,CRITICAL --format table $IMAGE_NAME
