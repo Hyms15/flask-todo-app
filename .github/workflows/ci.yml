@@ -131,6 +131,9 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Install Trivy
+        uses: aquasecurity/setup-trivy@v0.6.2
+
       - name: Run Trivy vulnerability scanner
         env:
           OWNER: ${{ github.repository_owner }}
