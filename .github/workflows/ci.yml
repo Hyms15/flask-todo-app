@@ -131,8 +131,9 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # ✅ Correct Trivy setup action version
       - name: Install Trivy
-        uses: aquasecurity/setup-trivy@v0.6.2
+        uses: aquasecurity/setup-trivy@v0.2.2
 
       - name: Run Trivy vulnerability scanner
         env:
