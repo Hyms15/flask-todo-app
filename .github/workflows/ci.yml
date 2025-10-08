@@ -112,6 +112,7 @@ jobs:
 
   docker-push:
     runs-on: ubuntu-latest
+    if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: docker-build
     permissions:
       contents: read
@@ -132,11 +133,24 @@ jobs:
       - name: Build and push Docker image to GHCR
         env:
           OWNER: ${{ github.repository_owner }}
+          SHA: ${{ github.sha }}
+          RUN: ${{ github.run_number }}
         run: |
+          set -e
           OWNER_LC=$(echo "$OWNER" | tr '[:upper:]' '[:lower:]')
-          IMAGE_NAME=ghcr.io/${OWNER_LC}/flask-todo-app:${{ github.run_number }}
-          echo "🏗️ Building and pushing image: $IMAGE_NAME"
-          docker buildx build --push -t $IMAGE_NAME .
+          BASE=ghcr.io/${OWNER_LC}/flask-todo-app
+          SHORT_SHA=${SHA::7}
+
+          echo "🏗️ Building & pushing tags:"
+          echo " - ${BASE}:${RUN}"
+          echo " - ${BASE}:${SHORT_SHA}"
+          echo " - ${BASE}:latest"
+
+          docker buildx build --push \
+            -t ${BASE}:${RUN} \
+            -t ${BASE}:${SHORT_SHA} \
+            -t ${BASE}:latest .
+
 
   container-scan:
     runs-on: ubuntu-latest
