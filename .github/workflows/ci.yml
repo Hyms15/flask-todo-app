@@ -140,17 +140,11 @@ jobs:
           OWNER_LC=$(echo "$OWNER" | tr '[:upper:]' '[:lower:]')
           BASE=ghcr.io/${OWNER_LC}/flask-todo-app
           SHORT_SHA=${SHA::7}
-
-          echo "🏗️ Building & pushing tags:"
-          echo " - ${BASE}:${RUN}"
-          echo " - ${BASE}:${SHORT_SHA}"
-          echo " - ${BASE}:latest"
+          IMAGE_TAG=${RUN}-${SHORT_SHA}
+          echo "🏗️ Building & pushing immutable tag: ${IMAGE_TAG}"
 
           docker buildx build --push \
-            -t ${BASE}:${RUN} \
-            -t ${BASE}:${SHORT_SHA} \
-            -t ${BASE}:latest .
-
+            -t ${BASE}:${IMAGE_TAG} .
 
   container-scan:
     runs-on: ubuntu-latest
@@ -182,9 +176,11 @@ jobs:
         run: |
           # Convert OWNER to lowercase
           OWNER_LC=$(echo "$OWNER" | tr '[:upper:]' '[:lower:]')
+          SHORT_SHA=${SHA::7}
+          IMAGE_TAG=${RUN}-${SHORT_SHA}
+          IMAGE_NAME=ghcr.io/${OWNER_LC}/flask-todo-app:${IMAGE_TAG}
 
-          # Define image name
-          IMAGE_NAME=ghcr.io/${OWNER_LC}/flask-todo-app:${{ github.run_number }}
+      
           echo "🔍 Scanning image: $IMAGE_NAME"
 
           # Run Trivy scan (pkg-types replaces deprecated vuln-type)
