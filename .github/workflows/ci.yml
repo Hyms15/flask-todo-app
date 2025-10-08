@@ -190,3 +190,18 @@ jobs:
           # Run Trivy scan (pkg-types replaces deprecated vuln-type)
           trivy image --exit-code 0 --pkg-types os,library --severity HIGH,CRITICAL --format table $IMAGE_NAME
 
+  cleanup-old-images:
+    runs-on: ubuntu-latest
+    needs: docker-push
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      packages: write  # Needed to delete images
+
+    steps:
+      - name: Cleanup old GHCR images
+        uses: devops-infra/action-ghcr-cleanup@v1
+        with:
+          package-type: container
+          package-name: flask-todo-app
+          keep-latest: 5       # Keep only 5 latest images
+          token: ${{ secrets.GHCR_PAT }}  
