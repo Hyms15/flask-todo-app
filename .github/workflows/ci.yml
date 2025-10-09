@@ -196,6 +196,7 @@ jobs:
 
           echo "🔍 Scanning image: $IMAGE_NAME"
           trivy image --exit-code 0 --pkg-types os,library --severity HIGH,CRITICAL --format table $IMAGE_NAME
+ 
  # 7️⃣ CLEANUP OLD IMAGES
   cleanup-old-images:
     runs-on: ubuntu-latest
@@ -214,30 +215,34 @@ jobs:
 
       - name: Cleanup old GHCR images via GitHub API
         env:
-          OWNER: your-org-or-username    # <-- replace with your GitHub username/org
-          PACKAGE: flask-todo-app        # <-- your image name
-          KEEP: 5                        # keep latest N versions
-          TOKEN: ${{ secrets.GITHUB_TOKEN }}  # or use PAT if GH_TOKEN can't delete
+          # 🔹 Set the correct GHCR owner
+          OWNER: Hyms15
+          PACKAGE: flask-todo-app
+          KEEP: 5
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}  # or use a PAT if necessary
         run: |
           set -euo pipefail
 
           echo "Owner: $OWNER  Package: $PACKAGE  Keep: $KEEP"
 
-          # detect whether owner is org or user
           if [ "$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $TOKEN" "https://api.github.com/orgs/$OWNER")" = "200" ]; then
             API_BASE="orgs"
           else
             API_BASE="users"
           fi
-
           echo "Using API base: $API_BASE"
 
-          # fetch first page
-          VERSIONS_JSON=$(curl -s -H "Accept: application/vnd.github+json" -H "Authorization: Bearer $TOKEN" \
+          RESPONSE=$(curl -s -H "Accept: application/vnd.github+json" -H "Authorization: Bearer $TOKEN" \
             "https://api.github.com/$API_BASE/$OWNER/packages/container/$PACKAGE/versions?per_page=100")
 
-          # delete old versions beyond KEEP
-          TO_DELETE=$(echo "$VERSIONS_JSON" | jq -r --argjson keep "$KEEP" 'sort_by(.created_at) | reverse | .[$keep:] | .[].id')
+          # validate API response
+          if ! echo "$RESPONSE" | jq type | grep -q array; then
+            echo "❌ API response is not an array. Check OWNER, PACKAGE, and TOKEN!"
+            echo "Response: $RESPONSE"
+            exit 1
+          fi
+
+          TO_DELETE=$(echo "$RESPONSE" | jq -r --argjson keep "$KEEP" 'sort_by(.created_at) | reverse | .[$keep:] | .[].id')
 
           if [ -z "$TO_DELETE" ]; then
             echo "No versions to delete (fewer or equal than $KEEP)."
@@ -252,6 +257,6 @@ jobs:
             echo "HTTP status: $STATUS"
           done
 
-          echo "✅ Cleanup finished."
+          echo "✅ Cleanup finished."          
 
 
