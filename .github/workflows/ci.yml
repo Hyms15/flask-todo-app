@@ -206,9 +206,30 @@ jobs:
       packages: write
 
     steps:
-      - name: Cleanup old GHCR images
-        uses: dataaxiom/ghcr-cleaner-action@v1
-        with:
-          token: ${{ secrets.GHCR_PAT }}
-          package: flask-todo-app
-          keep: 5
+      - name: Cleanup old GHCR images manually
+        env:
+          GHCR_PAT: ${{ secrets.GHCR_PAT }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          echo "🧹 Cleaning up old GHCR images..."
+          OWNER_LC=$(echo "$OWNER" | tr '[:upper:]' '[:lower:]')
+          REPO="flask-todo-app"
+          TOKEN=$GHCR_PAT
+
+          # Get all tags from GHCR (except latest 5)
+          TAGS=$(curl -s -H "Authorization: Bearer ${TOKEN}" \
+            https://ghcr.io/v2/${OWNER_LC}/${REPO}/tags/list \
+            | jq -r '.tags | sort | .[:-5][]')
+
+          if [ -z "$TAGS" ]; then
+            echo "✅ Nothing to delete (less than 5 images)."
+          else
+            echo "🗑️ Deleting old images..."
+            for TAG in $TAGS; do
+              echo "Deleting: $TAG"
+              curl -X DELETE \
+                -H "Authorization: Bearer ${TOKEN}" \
+                "https://ghcr.io/v2/${OWNER_LC}/${REPO}/manifests/$TAG" || true
+            done
+            echo "✅ Cleanup complete!"
+          fi
