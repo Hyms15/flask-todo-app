@@ -1,7 +1,17 @@
+# Exclude virtual environments
 venv/
-_pycache_/
+.venv/
+
+# Python cache files
+__pycache__/
 *.pyc
+
+# Local databases
 *.db
+
+# Git and config files
 .git
 .gitignore
+
+# Exclude tests (not needed inside container)
 tests/

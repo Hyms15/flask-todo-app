@@ -1,22 +1,36 @@
+---
 name: Flask CI Pipeline
 
-# Default permissions for all jobs (Least Privilege)
+# ------------------------------
+# Global settings and permissions
+# ------------------------------
 permissions:
   contents: read
   packages: none
   security-events: none
 
+# Global environment variables
+env:
+  OWNER: ${{ github.repository_owner }}
+  SHA: ${{ github.sha }}
+  RUN: ${{ github.run_number }}
+
+# Trigger on push and pull requests
 on:
   push:
-    branches: [ main, dev ]
+    branches: [main, dev]
   pull_request:
-    branches: [ main, dev ]
+    branches: [main, dev]
 
+# ------------------------------
+# Jobs
+# ------------------------------
 jobs:
+  # 1️⃣ BUILD & UNIT TEST
   build-test:
     runs-on: ubuntu-latest
     permissions:
-      contents: read   # only needs to read repo files
+      contents: read
 
     steps:
       - name: Checkout code
@@ -49,11 +63,12 @@ jobs:
           echo "🚀 Running unit tests..."
           python -m pytest tests/unit --disable-warnings -q
 
+  # 2️⃣ INTEGRATION TEST
   integration-test:
     runs-on: ubuntu-latest
     needs: build-test
     permissions:
-      contents: read   # no write required
+      contents: read
 
     steps:
       - name: Checkout code
@@ -78,25 +93,30 @@ jobs:
           echo "🚀 Running integration tests..."
           python -m pytest tests/integration --disable-warnings -q
 
+  # 3️⃣ LINT DOCKERFILE
   lint-dockerfile:
     runs-on: ubuntu-latest
     permissions:
       contents: read
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
+
       - name: Lint Dockerfile with Hadolint
         uses: hadolint/hadolint-action@v3.1.0
         with:
           dockerfile: Dockerfile
           config: .hadolint.yaml
 
+  # 4️⃣ BUILD DOCKER IMAGE
   docker-build:
     runs-on: ubuntu-latest
     needs: [build-test, integration-test, lint-dockerfile]
     permissions:
       contents: read
-      packages: write   # we’re building an image, may need push later
+      packages: write
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -110,13 +130,14 @@ jobs:
           docker build -t flask-todo-app:ci-${{ github.run_number }} .
           echo "✅ Image built successfully: flask-todo-app:ci-${{ github.run_number }}"
 
+  # 5️⃣ PUSH IMAGE TO GHCR
   docker-push:
     runs-on: ubuntu-latest
     if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: docker-build
     permissions:
       contents: read
-      packages: write   # required to push to GHCR
+      packages: write
 
     steps:
       - name: Checkout code
@@ -129,12 +150,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GHCR_PAT }}
 
-
       - name: Build and push Docker image to GHCR
-        env:
-          OWNER: ${{ github.repository_owner }}
-          SHA: ${{ github.sha }}
-          RUN: ${{ github.run_number }}
         run: |
           set -e
           OWNER_LC=$(echo "$OWNER" | tr '[:upper:]' '[:lower:]')
@@ -142,56 +158,52 @@ jobs:
           SHORT_SHA=${SHA::7}
           IMAGE_TAG=${RUN}-${SHORT_SHA}
           echo "🏗️ Building & pushing immutable tag: ${IMAGE_TAG}"
+          docker buildx build --push -t ${BASE}:${IMAGE_TAG} .
 
-          docker buildx build --push \
-            -t ${BASE}:${IMAGE_TAG} .
-
+  # 6️⃣ CONTAINER SECURITY SCAN
   container-scan:
     runs-on: ubuntu-latest
     needs: docker-push
     permissions:
       contents: read
       security-events: write
-      packages: read   # ✅ allow GHCR image access
+      packages: read
+    env:
+      OWNER: ${{ github.repository_owner }}
+      SHA: ${{ github.sha }}
+      RUN: ${{ github.run_number }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # ✅ Login to GHCR to allow Trivy to pull the image
-      - name: Log in to GitHub Container Registry
+      - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GHCR_PAT }}
-      # ✅ Install Trivy
+
       - name: Install Trivy
         uses: aquasecurity/setup-trivy@v0.2.2
 
-      # ✅ Run Trivy scan
       - name: Run Trivy vulnerability scanner
-        env:
-          OWNER: ${{ github.repository_owner }}
         run: |
-          # Convert OWNER to lowercase
           OWNER_LC=$(echo "$OWNER" | tr '[:upper:]' '[:lower:]')
           SHORT_SHA=${SHA::7}
           IMAGE_TAG=${RUN}-${SHORT_SHA}
           IMAGE_NAME=ghcr.io/${OWNER_LC}/flask-todo-app:${IMAGE_TAG}
 
-      
           echo "🔍 Scanning image: $IMAGE_NAME"
-
-          # Run Trivy scan (pkg-types replaces deprecated vuln-type)
           trivy image --exit-code 0 --pkg-types os,library --severity HIGH,CRITICAL --format table $IMAGE_NAME
 
+  # 7️⃣ CLEANUP OLD IMAGES
   cleanup-old-images:
     runs-on: ubuntu-latest
     needs: docker-push
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
-      packages: write  # Needed to delete images
+      packages: write
 
     steps:
       - name: Cleanup old GHCR images
@@ -199,5 +211,5 @@ jobs:
         with:
           package-type: container
           package-name: flask-todo-app
-          keep-latest: 5       # Keep only 5 latest images
-          token: ${{ secrets.GHCR_PAT }}  
+          keep-latest: 5
+          token: ${{ secrets.GHCR_PAT }}
