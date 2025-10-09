@@ -2,7 +2,7 @@
 name: Flask CI Pipeline
 
 # ------------------------------
-# Global settings and permissions
+# Global settings, permissions. 
 # ------------------------------
 permissions:
   contents: read
