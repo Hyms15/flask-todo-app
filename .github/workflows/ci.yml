@@ -207,9 +207,8 @@ jobs:
 
     steps:
       - name: Cleanup old GHCR images
-        uses: devops-infra/action-ghcr-cleanup@v1
+        uses: dataaxiom/ghcr-cleaner-action@v1
         with:
-          package-type: container
-          package-name: flask-todo-app
-          keep-latest: 5
           token: ${{ secrets.GHCR_PAT }}
+          package: flask-todo-app
+          keep: 5
