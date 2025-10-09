@@ -259,4 +259,39 @@ jobs:
 
           echo "✅ Cleanup finished."          
 
+            # 8️⃣ WEBHOOK NOTIFY
+  webhook-notify:
+    runs-on: ubuntu-latest
+    needs: [docker-push, cleanup-old-images]
+    if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+
+    env:
+      WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
+      WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
+      REPO: ${{ github.repository }}
+      SHA: ${{ github.sha }}
+      RUN: ${{ github.run_number }}
+
+    steps:
+      - name: Send webhook notification (signed)
+        run: |
+          set -euo pipefail
+          # Build JSON payload
+          PAYLOAD=$(printf '{"repo":"%s","sha":"%s","run":"%s","status":"image_pushed"}' "$REPO" "$SHA" "$RUN")
+
+          # Compute HMAC-SHA256 signature like GitHub does
+          SIG=$(printf '%s' "$PAYLOAD" | openssl dgst -sha256 -hmac "$WEBHOOK_SECRET" | sed 's/^.* //')
+          SIG_HEADER="sha256=$SIG"
+
+          echo "Sending payload: $PAYLOAD"
+          curl -s -X POST \
+            -H "Content-Type: application/json" \
+            -H "X-Hub-Signature-256: $SIG_HEADER" \
+            -d "$PAYLOAD" \
+            "$WEBHOOK_URL"
+
+          echo "✅ Webhook sent"
+
 
