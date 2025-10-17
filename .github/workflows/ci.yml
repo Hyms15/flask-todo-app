@@ -1,6 +1,8 @@
 name: Flask CI Pipeline
 
-# Default permissions for all jobs (Least Privilege)
+# ------------------------------
+# Global permissions (Least Privilege)
+# ------------------------------
 permissions:
   contents: read
   packages: none
@@ -13,6 +15,7 @@ on:
     branches: [ main, dev ]
 
 jobs:
+  # 1️⃣ BUILD & UNIT TEST
   build-test:
     runs-on: ubuntu-latest
     permissions:
@@ -22,7 +25,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 0  # Full history required for SonarCloud later
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -51,21 +54,12 @@ jobs:
           echo "🚀 Running unit tests..."
           python -m pytest tests/unit --disable-warnings -q
 
-      - name: SonarQube Scan
-        uses: SonarSource/sonarqube-scan-action@v1.2
-        with:
-            args: >
-              -Dsonar.projectKey=Hyms15
-              -Dsonar.organization=your_org_name
-              -Dsonar.host.url=https://sonarcloud.io
-              -Dsonar.login=${{ secrets.SONAR_TOKEN }}
-
-
+  # 2️⃣ INTEGRATION TEST
   integration-test:
     runs-on: ubuntu-latest
     needs: build-test
     permissions:
-      contents: read   # no write required
+      contents: read
 
     steps:
       - name: Checkout code
@@ -90,6 +84,38 @@ jobs:
           echo "🚀 Running integration tests..."
           python -m pytest tests/integration --disable-warnings -q
 
+  # 3️⃣ SONARCLOUD ANALYSIS
+  sonar-scan:
+    runs-on: ubuntu-latest
+    needs: [build-test, integration-test]
+    permissions:
+      contents: read
+      pull-requests: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # required for full analysis
+
+      - name: Set up Java (SonarCloud requires Java)
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: SonarCloud Scan
+        uses: SonarSource/sonarcloud-github-action@v2
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+        with:
+          args: >
+            -Dsonar.organization=${{ secrets.SONAR_ORGANIZATION }}
+            -Dsonar.projectKey=${{ secrets.SONAR_PROJECT_KEY }}
+            -Dsonar.python.version=3.11
+
+  # 4️⃣ LINT DOCKERFILE
   lint-dockerfile:
     runs-on: ubuntu-latest
     permissions:
@@ -103,12 +129,14 @@ jobs:
           dockerfile: Dockerfile
           config: .hadolint.yaml
 
+  # 5️⃣ BUILD DOCKER IMAGE
   docker-build:
     runs-on: ubuntu-latest
-    needs: [build-test, integration-test, lint-dockerfile]
+    needs: [sonar-scan, lint-dockerfile]
     permissions:
       contents: read
-      packages: write   # we’re building an image, may need push later
+      packages: write
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -122,13 +150,14 @@ jobs:
           docker build -t flask-todo-app:ci-${{ github.run_number }} .
           echo "✅ Image built successfully: flask-todo-app:ci-${{ github.run_number }}"
 
+  # 6️⃣ PUSH IMAGE TO GHCR
   docker-push:
     runs-on: ubuntu-latest
     if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: docker-build
     permissions:
       contents: read
-      packages: write   # required to push to GHCR
+      packages: write
 
     steps:
       - name: Checkout code
@@ -140,7 +169,6 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GHCR_PAT }}
-
 
       - name: Build and push Docker image to GHCR
         env:
@@ -152,55 +180,48 @@ jobs:
           OWNER_LC=$(echo "$OWNER" | tr '[:upper:]' '[:lower:]')
           BASE=ghcr.io/${OWNER_LC}/flask-todo-app
           SHORT_SHA=${SHA::7}
-
           echo "🏗️ Building & pushing tags:"
           echo " - ${BASE}:${RUN}"
           echo " - ${BASE}:${SHORT_SHA}"
           echo " - ${BASE}:latest"
-
           docker buildx build --push \
             -t ${BASE}:${RUN} \
             -t ${BASE}:${SHORT_SHA} \
             -t ${BASE}:latest .
 
-
+  # 7️⃣ CONTAINER SECURITY SCAN
   container-scan:
     runs-on: ubuntu-latest
     needs: docker-push
     permissions:
       contents: read
       security-events: write
-      packages: read   # ✅ allow GHCR image access
+      packages: read
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # ✅ Login to GHCR to allow Trivy to pull the image
-      - name: Log in to GitHub Container Registry
+      - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GHCR_PAT }}
-      # ✅ Install Trivy
+
       - name: Install Trivy
         uses: aquasecurity/setup-trivy@v0.2.2
 
-      # ✅ Run Trivy scan
       - name: Run Trivy vulnerability scanner
         env:
           OWNER: ${{ github.repository_owner }}
         run: |
-          # Convert OWNER to lowercase
           OWNER_LC=$(echo "$OWNER" | tr '[:upper:]' '[:lower:]')
-
-          # Define image name
           IMAGE_NAME=ghcr.io/${OWNER_LC}/flask-todo-app:${{ github.run_number }}
           echo "🔍 Scanning image: $IMAGE_NAME"
-
-          # Run Trivy scan (pkg-types replaces deprecated vuln-type)
           trivy image --exit-code 0 --pkg-types os,library --severity HIGH,CRITICAL --format table $IMAGE_NAME
+
+  # 8️⃣ BACKUP GHCR IMAGE
   backup-ghcr:
     runs-on: ubuntu-latest
     needs: container-scan

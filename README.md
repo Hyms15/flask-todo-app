@@ -52,3 +52,16 @@ This project is **containerized using a multi-stage Docker build** for optimized
 ```bash
 docker pull hyma1569/flask-todo-app:v1.0.0
 docker run -p 5001:5000 hyma1569/flask-todo-app:v1.0.0
+
+## 💾 Backup & Disaster Recovery (Epic 3 - Story 9)
+
+After every successful image push, the CI pipeline automatically:
+- Pulls the latest image from GHCR.
+- Saves it as a .tar file.
+- Uploads it as a downloadable GitHub Action artifact.
+
+### 🔁 Restore Steps
+To restore the image locally:
+```bash
+docker load -i flask-todo-backup-XX.tar
+
