@@ -49,11 +49,11 @@ jobs:
           echo "🚀 Running unit tests..."
           python -m pytest tests/unit --disable-warnings -q
       - name: SonarQube Scan
-        uses: sonarsource/sonarqube-scan-action@v2
-        with:
-          projectKey: Hyms15
-          hostUrl: ${{ secrets.SONAR_HOST_URL }}
-          login: ${{ secrets.SONAR_TOKEN }}
+  uses: sonarsource/sonarqube-scan-action@v2
+  env:
+    SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+    SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+
 
   integration-test:
     runs-on: ubuntu-latest
