@@ -2,7 +2,7 @@
 name: Flask CI Pipeline
 
 # ------------------------------
-# Global settings, permissions. 
+# Global settings, permissions
 # ------------------------------
 permissions:
   contents: read
@@ -158,7 +158,7 @@ jobs:
           SHORT_SHA=${SHA::7}
           IMAGE_TAG=${RUN}-${SHORT_SHA}
           echo "🏗️ Building & pushing immutable tag: ${IMAGE_TAG}"
-          docker buildx build --push -t ${BASE}:${IMAGE_TAG} .
+          docker buildx build --push -t ${BASE}:${IMAGE_TAG} -t ${BASE}:latest .
 
   # 6️⃣ CONTAINER SECURITY SCAN
   container-scan:
@@ -196,8 +196,8 @@ jobs:
 
           echo "🔍 Scanning image: $IMAGE_NAME"
           trivy image --exit-code 0 --pkg-types os,library --severity HIGH,CRITICAL --format table $IMAGE_NAME
- 
- # 7️⃣ CLEANUP OLD IMAGES
+
+  # 7️⃣ CLEANUP OLD IMAGES
   cleanup-old-images:
     runs-on: ubuntu-latest
     needs: docker-push
@@ -215,14 +215,12 @@ jobs:
 
       - name: Cleanup old GHCR images via GitHub API
         env:
-          # 🔹 Set the correct GHCR owner
           OWNER: Hyms15
           PACKAGE: flask-todo-app
           KEEP: 5
-          TOKEN: ${{ secrets.GITHUB_TOKEN }}  # or use a PAT if necessary
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-
           echo "Owner: $OWNER  Package: $PACKAGE  Keep: $KEEP"
 
           if [ "$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $TOKEN" "https://api.github.com/orgs/$OWNER")" = "200" ]; then
@@ -230,40 +228,25 @@ jobs:
           else
             API_BASE="users"
           fi
-          echo "Using API base: $API_BASE"
-
           RESPONSE=$(curl -s -H "Accept: application/vnd.github+json" -H "Authorization: Bearer $TOKEN" \
             "https://api.github.com/$API_BASE/$OWNER/packages/container/$PACKAGE/versions?per_page=100")
-
-          # validate API response
-          if ! echo "$RESPONSE" | jq type | grep -q array; then
-            echo "❌ API response is not an array. Check OWNER, PACKAGE, and TOKEN!"
-            echo "Response: $RESPONSE"
-            exit 1
-          fi
-
           TO_DELETE=$(echo "$RESPONSE" | jq -r --argjson keep "$KEEP" 'sort_by(.created_at) | reverse | .[$keep:] | .[].id')
-
           if [ -z "$TO_DELETE" ]; then
-            echo "No versions to delete (fewer or equal than $KEEP)."
+            echo "No versions to delete."
             exit 0
           fi
-
           for id in $TO_DELETE; do
-            echo "Deleting package version id: $id"
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE -H "Authorization: Bearer $TOKEN" \
-              -H "Accept: application/vnd.github+json" \
-              "https://api.github.com/$API_BASE/$OWNER/packages/container/$PACKAGE/versions/$id")
-            echo "HTTP status: $STATUS"
+            echo "Deleting version id: $id"
+            curl -s -X DELETE -H "Authorization: Bearer $TOKEN" \
+              "https://api.github.com/$API_BASE/$OWNER/packages/container/$PACKAGE/versions/$id"
           done
+          echo "✅ Cleanup finished."
 
-          echo "✅ Cleanup finished."          
-
-            # 8️⃣ WEBHOOK NOTIFY
+  # 8️⃣ WEBHOOK NOTIFY
   webhook-notify:
     runs-on: ubuntu-latest
     needs: [docker-push, cleanup-old-images]
-    if: success()    # ✅ Run whenever pipeline succeeds (not just on push)
+    if: success()
     permissions:
       contents: read
 
@@ -278,21 +261,50 @@ jobs:
       - name: Send webhook notification (signed)
         run: |
           set -euo pipefail
-
-          # Build JSON payload (this will be received by your Flask app)
           PAYLOAD=$(printf '{"repo":"%s","sha":"%s","run":"%s","status":"image_pushed"}' "$REPO" "$SHA" "$RUN")
-
-          # Compute HMAC-SHA256 signature like GitHub does
           SIG=$(printf '%s' "$PAYLOAD" | openssl dgst -sha256 -hmac "$WEBHOOK_SECRET" | sed 's/^.* //')
           SIG_HEADER="sha256=$SIG"
-
           echo "📦 Sending payload: $PAYLOAD"
-
-          # Send POST request to your Flask app through ngrok
           curl -v -X POST \
             -H "Content-Type: application/json" \
             -H "X-Hub-Signature-256: $SIG_HEADER" \
             -d "$PAYLOAD" \
             "$WEBHOOK_URL"
-
           echo "✅ Webhook sent successfully!"
+
+  # 9️⃣ BACKUP GHCR IMAGE
+  backup-ghcr:
+    runs-on: ubuntu-latest
+    needs: [docker-push, cleanup-old-images, webhook-notify]
+    if: success() && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: read
+      actions: write
+
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PAT }}
+
+      - name: Pull latest GHCR image
+        run: |
+          OWNER_LC=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          BASE=ghcr.io/${OWNER_LC}/flask-todo-app
+          echo "📥 Pulling latest image: ${BASE}:latest"
+          docker pull ${BASE}:latest
+
+      - name: Save image as TAR backup
+        run: |
+          mkdir -p backups
+          docker save ghcr.io/${{ github.repository_owner }}/flask-todo-app:latest -o backups/flask-todo-backup-${{ github.run_number }}.tar
+          echo "✅ Backup file created: backups/flask-todo-backup-${{ github.run_number }}.tar"
+
+      - name: Upload backup to GitHub Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ghcr-image-backup
+          path: backups/
