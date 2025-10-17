@@ -280,3 +280,34 @@ jobs:
           echo "💾 Saving image $IMAGE to $BACKUP_FILE"
           docker save "$IMAGE" -o "$BACKUP_FILE"
           echo "✅ Backup file created: $BACKUP_FILE"
+    # 9️⃣ INTEGRATE REPORTS WITH JIRA
+  jira-report:
+    runs-on: ubuntu-latest
+    needs: sonar-scan
+    if: always()   # run even if the pipeline failed, so Jira sees all statuses
+    steps:
+      - name: Send report to Jira
+        env:
+          JIRA_URL: ${{ secrets.JIRA_URL }}
+          JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+          JIRA_TOKEN: ${{ secrets.JIRA_TOKEN }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          STATUS: ${{ job.status }}
+        run: |
+          echo "📢 Sending CI status to Jira..."
+
+          # Create a JSON message for Jira comment
+          JSON_PAYLOAD=$(jq -n \
+            --arg summary "CI Pipeline Report - $REPO" \
+            --arg description "Pipeline [$RUN_URL] finished with status: *$STATUS*." \
+            '{fields: {project: {key: "DEVOPS"}, summary: $summary, description: $description, issuetype: {name: "Task"}}}')
+
+          # POST to Jira API
+          curl -X POST \
+            -H "Content-Type: application/json" \
+            -u "$JIRA_EMAIL:$JIRA_TOKEN" \
+            --data "$JSON_PAYLOAD" \
+            "$JIRA_URL/rest/api/3/issue/"
+
+          echo "✅ Report sent to Jira."
