@@ -90,7 +90,7 @@ jobs:
         uses: SonarSource/sonarcloud-github-action@master
         with:
           args: >
-            -Dsonar.organization=your-org-name
+            -Dsonar.organization=Hymas15
             -Dsonar.projectKey=flask-todo-app
             -Dsonar.python.coverage.reportPaths=coverage.xml
             -Dsonar.sources=app
