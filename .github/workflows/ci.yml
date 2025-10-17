@@ -15,7 +15,7 @@ on:
     branches: [ main, dev ]
 
 jobs:
-  # 1️⃣ BUILD & UNIT TEST
+  # 1️⃣ BUILD & UNIT TEST (with coverage)
   build-test:
     runs-on: ubuntu-latest
     permissions:
@@ -43,16 +43,17 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r requirements.txt pytest-cov
           echo "✅ Installed dependencies:"
           pip list
 
-      - name: Run unit tests
+      - name: Run unit tests with coverage
         env:
           PYTHONPATH: ${{ github.workspace }}
         run: |
-          echo "🚀 Running unit tests..."
-          python -m pytest tests/unit --disable-warnings -q
+          echo "🚀 Running unit tests with coverage..."
+          python -m pytest --cov=app --cov-report=xml --disable-warnings -q
+          echo "✅ Coverage report generated: coverage.xml"
 
   # 2️⃣ INTEGRATION TEST
   integration-test:
@@ -84,7 +85,7 @@ jobs:
           echo "🚀 Running integration tests..."
           python -m pytest tests/integration --disable-warnings -q
 
-  # 3️⃣ SONARCLOUD ANALYSIS
+    # 3️⃣ SONARCLOUD ANALYSIS + QUALITY GATE
   sonar-scan:
     runs-on: ubuntu-latest
     needs: [build-test, integration-test]
@@ -96,7 +97,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # required for full analysis
+          fetch-depth: 0
 
       - name: Set up Java (SonarCloud requires Java)
         uses: actions/setup-java@v3
@@ -104,16 +105,18 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: SonarCloud Scan
+      - name: SonarCloud Scan and Wait for Quality Gate
         uses: SonarSource/sonarcloud-github-action@v2
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
         with:
           args: >
             -Dsonar.organization=${{ secrets.SONAR_ORGANIZATION }}
             -Dsonar.projectKey=${{ secrets.SONAR_PROJECT_KEY }}
             -Dsonar.python.version=3.11
+            -Dsonar.python.coverage.reportPaths=coverage.xml
+            -Dsonar.qualitygate.wait=true
+
 
   # 4️⃣ LINT DOCKERFILE
   lint-dockerfile:
