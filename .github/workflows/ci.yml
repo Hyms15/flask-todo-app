@@ -299,8 +299,9 @@ jobs:
 
       - name: Save image as TAR backup
         run: |
+          OWNER_LC=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
           mkdir -p backups
-          docker save ghcr.io/${{ github.repository_owner }}/flask-todo-app:latest -o backups/flask-todo-backup-${{ github.run_number }}.tar
+          docker save ghcr.io/${OWNER_LC}/flask-todo-app:latest -o backups/flask-todo-backup-${{ github.run_number }}.tar
           echo "✅ Backup file created: backups/flask-todo-backup-${{ github.run_number }}.tar"
 
       - name: Upload backup to GitHub Artifacts
