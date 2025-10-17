@@ -1,21 +1,31 @@
+---
 name: Flask CI Pipeline
 
 # ------------------------------
-# Global permissions (Least Privilege)
+# Global settings, permissions
 # ------------------------------
 permissions:
   contents: read
   packages: none
   security-events: none
 
+env:
+  OWNER: ${{ github.repository_owner }}
+  SHA: ${{ github.sha }}
+  RUN: ${{ github.run_number }}
+
 on:
   push:
-    branches: [ main, dev ]
+    branches: [main, dev]
   pull_request:
-    branches: [ main, dev ]
+    branches: [main, dev]
 
+# ------------------------------
+# Jobs
+# ------------------------------
 jobs:
-  # 1️⃣ BUILD & UNIT TEST (with coverage)
+
+  # 1️⃣ BUILD & UNIT TEST
   build-test:
     runs-on: ubuntu-latest
     permissions:
@@ -24,8 +34,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0  # Full history required for SonarCloud later
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -43,7 +51,8 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt pytest-cov
+          pip install -r requirements.txt
+          pip install pytest-cov
           echo "✅ Installed dependencies:"
           pip list
 
@@ -52,10 +61,55 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}
         run: |
           echo "🚀 Running unit tests with coverage..."
-          python -m pytest --cov=app --cov-report=xml --disable-warnings -q
-          echo "✅ Coverage report generated: coverage.xml"
+          pytest tests/unit --disable-warnings --cov=app --cov-report=xml
 
-  # 2️⃣ INTEGRATION TEST
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.xml
+
+  # 2️⃣ QUALITY GATE - SONARCLOUD ANALYSIS
+  quality-gate:
+    runs-on: ubuntu-latest
+    needs: build-test
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download coverage report
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-report
+          path: .
+
+      - name: Set up SonarCloud
+        uses: SonarSource/sonarcloud-github-action@master
+        with:
+          args: >
+            -Dsonar.organization=your-org-name
+            -Dsonar.projectKey=flask-todo-app
+            -Dsonar.python.coverage.reportPaths=coverage.xml
+            -Dsonar.sources=app
+            -Dsonar.tests=tests
+            -Dsonar.test.inclusions=tests/**
+            -Dsonar.exclusions=**/__pycache__/**
+            -Dsonar.security.hotspotDetection=true
+            -Dsonar.issue.enforceSecurityHotspots=true
+            -Dsonar.qualitygate.wait=true
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Wait for Quality Gate
+        uses: SonarSource/sonarcloud-quality-gate-action@master
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+  # 3️⃣ INTEGRATION TEST
   integration-test:
     runs-on: ubuntu-latest
     needs: build-test
@@ -75,8 +129,6 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          echo "✅ Installed dependencies:"
-          pip list
 
       - name: Run integration tests
         env:
@@ -85,43 +137,6 @@ jobs:
           echo "🚀 Running integration tests..."
           python -m pytest tests/integration --disable-warnings -q
 
-    # 3️⃣ SONARCLOUD ANALYSIS + QUALITY GATE + PR/BRANCH SUPPORT
-  sonar-scan:
-    runs-on: ubuntu-latest
-    needs: [build-test, integration-test]
-    permissions:
-      contents: read
-      pull-requests: read
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0  # full history for proper diff analysis
-
-      - name: Set up Java (SonarCloud requires Java)
-        uses: actions/setup-java@v3
-        with:
-          distribution: 'temurin'
-          java-version: '17'
-
-      - name: SonarCloud Scan and Wait for Quality Gate
-        uses: SonarSource/sonarcloud-github-action@v2
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-        with:
-          args: >
-            -Dsonar.organization=${{ secrets.SONAR_ORGANIZATION }}
-            -Dsonar.projectKey=${{ secrets.SONAR_PROJECT_KEY }}
-            -Dsonar.host.url=https://sonarcloud.io
-            -Dsonar.python.version=3.11
-            -Dsonar.python.coverage.reportPaths=coverage.xml
-            -Dsonar.qualitygate.wait=true
-            ${{ github.event_name == 'pull_request' && format('-Dsonar.pullrequest.key={0} -Dsonar.pullrequest.branch={1} -Dsonar.pullrequest.base={2}', github.event.pull_request.number, github.head_ref, github.base_ref) || format('-Dsonar.branch.name={0}', github.ref_name) }}
-
-
-
-
   # 4️⃣ LINT DOCKERFILE
   lint-dockerfile:
     runs-on: ubuntu-latest
@@ -129,7 +144,9 @@ jobs:
       contents: read
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
+
       - name: Lint Dockerfile with Hadolint
         uses: hadolint/hadolint-action@v3.1.0
         with:
@@ -139,7 +156,7 @@ jobs:
   # 5️⃣ BUILD DOCKER IMAGE
   docker-build:
     runs-on: ubuntu-latest
-    needs: [sonar-scan, lint-dockerfile]
+    needs: [quality-gate, integration-test, lint-dockerfile]
     permissions:
       contents: read
       packages: write
@@ -178,23 +195,14 @@ jobs:
           password: ${{ secrets.GHCR_PAT }}
 
       - name: Build and push Docker image to GHCR
-        env:
-          OWNER: ${{ github.repository_owner }}
-          SHA: ${{ github.sha }}
-          RUN: ${{ github.run_number }}
         run: |
           set -e
           OWNER_LC=$(echo "$OWNER" | tr '[:upper:]' '[:lower:]')
           BASE=ghcr.io/${OWNER_LC}/flask-todo-app
           SHORT_SHA=${SHA::7}
-          echo "🏗️ Building & pushing tags:"
-          echo " - ${BASE}:${RUN}"
-          echo " - ${BASE}:${SHORT_SHA}"
-          echo " - ${BASE}:latest"
-          docker buildx build --push \
-            -t ${BASE}:${RUN} \
-            -t ${BASE}:${SHORT_SHA} \
-            -t ${BASE}:latest .
+          IMAGE_TAG=${RUN}-${SHORT_SHA}
+          echo "🏗️ Building & pushing immutable tag: ${IMAGE_TAG}"
+          docker buildx build --push -t ${BASE}:${IMAGE_TAG} -t ${BASE}:latest .
 
   # 7️⃣ CONTAINER SECURITY SCAN
   container-scan:
@@ -204,6 +212,10 @@ jobs:
       contents: read
       security-events: write
       packages: read
+    env:
+      OWNER: ${{ github.repository_owner }}
+      SHA: ${{ github.sha }}
+      RUN: ${{ github.run_number }}
 
     steps:
       - name: Checkout code
@@ -220,26 +232,101 @@ jobs:
         uses: aquasecurity/setup-trivy@v0.2.2
 
       - name: Run Trivy vulnerability scanner
-        env:
-          OWNER: ${{ github.repository_owner }}
         run: |
           OWNER_LC=$(echo "$OWNER" | tr '[:upper:]' '[:lower:]')
-          IMAGE_NAME=ghcr.io/${OWNER_LC}/flask-todo-app:${{ github.run_number }}
+          SHORT_SHA=${SHA::7}
+          IMAGE_TAG=${RUN}-${SHORT_SHA}
+          IMAGE_NAME=ghcr.io/${OWNER_LC}/flask-todo-app:${IMAGE_TAG}
+
           echo "🔍 Scanning image: $IMAGE_NAME"
           trivy image --exit-code 0 --pkg-types os,library --severity HIGH,CRITICAL --format table $IMAGE_NAME
 
-  # 8️⃣ BACKUP GHCR IMAGE
-  backup-ghcr:
+  # 8️⃣ CLEANUP OLD IMAGES
+  cleanup-old-images:
     runs-on: ubuntu-latest
-    needs: container-scan
+    needs: docker-push
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
-      contents: write
-      packages: read
+      packages: write
+      contents: read
 
     steps:
-      - name: Checkout code
+      - name: Checkout repo
         uses: actions/checkout@v4
 
+      - name: Install tools
+        run: sudo apt-get update && sudo apt-get install -y jq curl
+
+      - name: Cleanup old GHCR images
+        env:
+          OWNER: ${{ github.repository_owner }}
+          PACKAGE: flask-todo-app
+          KEEP: 5
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          echo "Owner: $OWNER  Package: $PACKAGE  Keep: $KEEP"
+
+          if [ "$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $TOKEN" "https://api.github.com/orgs/$OWNER")" = "200" ]; then
+            API_BASE="orgs"
+          else
+            API_BASE="users"
+          fi
+          RESPONSE=$(curl -s -H "Accept: application/vnd.github+json" -H "Authorization: Bearer $TOKEN" \
+            "https://api.github.com/$API_BASE/$OWNER/packages/container/$PACKAGE/versions?per_page=100")
+          TO_DELETE=$(echo "$RESPONSE" | jq -r --argjson keep "$KEEP" 'sort_by(.created_at) | reverse | .[$keep:] | .[].id')
+          if [ -z "$TO_DELETE" ]; then
+            echo "No versions to delete."
+            exit 0
+          fi
+          for id in $TO_DELETE; do
+            echo "Deleting version id: $id"
+            curl -s -X DELETE -H "Authorization: Bearer $TOKEN" \
+              "https://api.github.com/$API_BASE/$OWNER/packages/container/$PACKAGE/versions/$id"
+          done
+          echo "✅ Cleanup finished."
+
+  # 9️⃣ WEBHOOK NOTIFY
+  webhook-notify:
+    runs-on: ubuntu-latest
+    needs: [docker-push, cleanup-old-images]
+    if: success()
+    permissions:
+      contents: read
+
+    env:
+      WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
+      WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
+      REPO: ${{ github.repository }}
+      SHA: ${{ github.sha }}
+      RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+    steps:
+      - name: Send webhook notification (signed)
+        run: |
+          set -euo pipefail
+          PAYLOAD=$(printf '{"repo":"%s","sha":"%s","run":"%s","status":"image_pushed"}' "$REPO" "$SHA" "$RUN")
+          SIG=$(printf '%s' "$PAYLOAD" | openssl dgst -sha256 -hmac "$WEBHOOK_SECRET" | sed 's/^.* //')
+          SIG_HEADER="sha256=$SIG"
+          echo "📦 Sending payload: $PAYLOAD"
+          curl -v -X POST \
+            -H "Content-Type: application/json" \
+            -H "X-Hub-Signature-256: $SIG_HEADER" \
+            -d "$PAYLOAD" \
+            "$WEBHOOK_URL"
+          echo "✅ Webhook sent successfully!"
+
+  # 🔟 BACKUP GHCR IMAGE
+  backup-ghcr:
+    runs-on: ubuntu-latest
+    needs: [docker-push, cleanup-old-images, webhook-notify]
+    if: success() && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: read
+      actions: write
+
+    steps:
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
@@ -248,24 +335,21 @@ jobs:
           password: ${{ secrets.GHCR_PAT }}
 
       - name: Pull latest GHCR image
-        env:
-          OWNER: ${{ github.repository_owner }}
         run: |
-          OWNER_LC=$(echo "$OWNER" | tr '[:upper:]' '[:lower:]')
-          IMAGE=ghcr.io/${OWNER_LC}/flask-todo-app:latest
-          echo "📦 Pulling image: $IMAGE"
-          docker pull "$IMAGE"
+          OWNER_LC=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          BASE=ghcr.io/${OWNER_LC}/flask-todo-app
+          echo "📥 Pulling latest image: ${BASE}:latest"
+          docker pull ${BASE}:latest
 
       - name: Save image as TAR backup
-        env:
-          OWNER: ${{ github.repository_owner }}
-          RUN_NUMBER: ${{ github.run_number }}
         run: |
-          set -e
-          OWNER_LC=$(echo "$OWNER" | tr '[:upper:]' '[:lower:]')
+          OWNER_LC=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
           mkdir -p backups
-          IMAGE=ghcr.io/${OWNER_LC}/flask-todo-app:latest
-          BACKUP_FILE=backups/flask-todo-backup-${RUN_NUMBER}.tar
-          echo "💾 Saving image $IMAGE to $BACKUP_FILE"
-          docker save "$IMAGE" -o "$BACKUP_FILE"
-          echo "✅ Backup file created: $BACKUP_FILE"
+          docker save ghcr.io/${OWNER_LC}/flask-todo-app:latest -o backups/flask-todo-backup-${{ github.run_number }}.tar
+          echo "✅ Backup file created: backups/flask-todo-backup-${{ github.run_number }}.tar"
+
+      - name: Upload backup to GitHub Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-backup
+          path: backups/
