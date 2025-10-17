@@ -16,11 +16,13 @@ jobs:
   build-test:
     runs-on: ubuntu-latest
     permissions:
-      contents: read   # only needs to read repo files
+      contents: read
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -48,8 +50,9 @@ jobs:
         run: |
           echo "🚀 Running unit tests..."
           python -m pytest tests/unit --disable-warnings -q
+
       - name: SonarQube Scan
-        uses: sonarsource/sonarqube-scan-action@v2
+        uses: SonarSource/sonarqube-scan-action@v1.2
         with:
             args: >
               -Dsonar.projectKey=Hyms15
