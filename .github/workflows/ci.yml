@@ -117,14 +117,11 @@ jobs:
             -Dsonar.python.version=3.11
             -Dsonar.python.coverage.reportPaths=coverage.xml
             -Dsonar.qualitygate.wait=true
-
-            # ✅ Enable pull request analysis
             -Dsonar.pullrequest.key=${{ github.event.pull_request.number }}
             -Dsonar.pullrequest.branch=${{ github.head_ref }}
             -Dsonar.pullrequest.base=${{ github.base_ref }}
-
-            # ✅ Optional: Identify branch analysis (non-PR pushes)
             -Dsonar.branch.name=${{ github.ref_name }}
+
 
 
   # 4️⃣ LINT DOCKERFILE
