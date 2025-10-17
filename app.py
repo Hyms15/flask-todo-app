@@ -1,5 +1,6 @@
 from flask import Flask, request, jsonify
 from flask_sqlalchemy import SQLAlchemy
+import requests  # ✅ Only needed if you later want to send Slack notifications
 
 app = Flask(__name__)
 app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///todos.db"
@@ -40,6 +41,36 @@ def delete_todo(todo_id):
     db.session.delete(t)
     db.session.commit()
     return jsonify({"message": "deleted"})
+
+# ------------------------------------------
+# ✅ NEW ROUTE: GitHub Webhook Receiver
+# ------------------------------------------
+@app.route("/webhook", methods=["POST"])
+def github_webhook():
+    """
+    This route listens for GitHub push events.
+    When someone pushes code to your repo, GitHub sends a JSON payload here.
+    """
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "Invalid payload"}), 400
+
+    ref = data.get("ref", "unknown")
+    pusher = data.get("pusher", {}).get("name", "unknown")
+    repo = data.get("repository", {}).get("full_name", "unknown")
+
+    print("🚀 New push event received!")
+    print(f"Repo: {repo}")
+    print(f"Branch: {ref}")
+    print(f"Pushed by: {pusher}")
+
+    # ✅ Optional: You can integrate Slack notification here later
+    # Example:
+    # message = f"🚀 New push to *{repo}* on branch *{ref}* by *{pusher}*"
+    # requests.post(SLACK_WEBHOOK_URL, json={"text": message})
+
+    return jsonify({"status": "Webhook received"}), 200
+
 
 if __name__ == "__main__":
     with app.app_context():
