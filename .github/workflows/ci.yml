@@ -85,7 +85,7 @@ jobs:
           echo "🚀 Running integration tests..."
           python -m pytest tests/integration --disable-warnings -q
 
-  # 3️⃣ SONARCLOUD ANALYSIS + QUALITY GATE
+    # 3️⃣ SONARCLOUD ANALYSIS + QUALITY GATE
   sonar-scan:
     runs-on: ubuntu-latest
     needs: [build-test, integration-test]
@@ -97,7 +97,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # required for full analysis
+          fetch-depth: 0
 
       - name: Set up Java (SonarCloud requires Java)
         uses: actions/setup-java@v3
@@ -105,7 +105,7 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: SonarCloud Scan (with coverage)
+      - name: SonarCloud Scan and Wait for Quality Gate
         uses: SonarSource/sonarcloud-github-action@v2
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
@@ -115,11 +115,8 @@ jobs:
             -Dsonar.projectKey=${{ secrets.SONAR_PROJECT_KEY }}
             -Dsonar.python.version=3.11
             -Dsonar.python.coverage.reportPaths=coverage.xml
+            -Dsonar.qualitygate.wait=true
 
-      - name: Check Quality Gate status
-        uses: SonarSource/sonarcloud-quality-gate-action@v1
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
   # 4️⃣ LINT DOCKERFILE
   lint-dockerfile:
