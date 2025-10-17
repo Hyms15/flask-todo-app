@@ -1,36 +1,22 @@
----
 name: Flask CI Pipeline
 
-# ------------------------------
-# Global settings, permissions
-# ------------------------------
+# Default permissions for all jobs (Least Privilege)
 permissions:
   contents: read
   packages: none
   security-events: none
 
-# Global environment variables
-env:
-  OWNER: ${{ github.repository_owner }}
-  SHA: ${{ github.sha }}
-  RUN: ${{ github.run_number }}
-
-# Trigger on push and pull requests
 on:
   push:
-    branches: [main, dev]
+    branches: [ main, dev ]
   pull_request:
-    branches: [main, dev]
+    branches: [ main, dev ]
 
-# ------------------------------
-# Jobs
-# ------------------------------
 jobs:
-  # 1️⃣ BUILD & UNIT TEST
   build-test:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: read   # only needs to read repo files
 
     steps:
       - name: Checkout code
@@ -62,13 +48,18 @@ jobs:
         run: |
           echo "🚀 Running unit tests..."
           python -m pytest tests/unit --disable-warnings -q
+      - name: SonarQube Scan
+        uses: sonarsource/sonarqube-scan-action@v2
+        with:
+          projectKey: Hyms15
+          hostUrl: ${{ secrets.SONAR_HOST_URL }}
+          login: ${{ secrets.SONAR_TOKEN }}
 
-  # 2️⃣ INTEGRATION TEST
   integration-test:
     runs-on: ubuntu-latest
     needs: build-test
     permissions:
-      contents: read
+      contents: read   # no write required
 
     steps:
       - name: Checkout code
@@ -93,30 +84,25 @@ jobs:
           echo "🚀 Running integration tests..."
           python -m pytest tests/integration --disable-warnings -q
 
-  # 3️⃣ LINT DOCKERFILE
   lint-dockerfile:
     runs-on: ubuntu-latest
     permissions:
       contents: read
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
+      - uses: actions/checkout@v4
       - name: Lint Dockerfile with Hadolint
         uses: hadolint/hadolint-action@v3.1.0
         with:
           dockerfile: Dockerfile
           config: .hadolint.yaml
 
-  # 4️⃣ BUILD DOCKER IMAGE
   docker-build:
     runs-on: ubuntu-latest
     needs: [build-test, integration-test, lint-dockerfile]
     permissions:
       contents: read
-      packages: write
-
+      packages: write   # we’re building an image, may need push later
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -130,14 +116,13 @@ jobs:
           docker build -t flask-todo-app:ci-${{ github.run_number }} .
           echo "✅ Image built successfully: flask-todo-app:ci-${{ github.run_number }}"
 
-  # 5️⃣ PUSH IMAGE TO GHCR
   docker-push:
     runs-on: ubuntu-latest
     if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: docker-build
     permissions:
       contents: read
-      packages: write
+      packages: write   # required to push to GHCR
 
     steps:
       - name: Checkout code
@@ -150,28 +135,72 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GHCR_PAT }}
 
+
       - name: Build and push Docker image to GHCR
+        env:
+          OWNER: ${{ github.repository_owner }}
+          SHA: ${{ github.sha }}
+          RUN: ${{ github.run_number }}
         run: |
           set -e
           OWNER_LC=$(echo "$OWNER" | tr '[:upper:]' '[:lower:]')
           BASE=ghcr.io/${OWNER_LC}/flask-todo-app
           SHORT_SHA=${SHA::7}
-          IMAGE_TAG=${RUN}-${SHORT_SHA}
-          echo "🏗️ Building & pushing immutable tag: ${IMAGE_TAG}"
-          docker buildx build --push -t ${BASE}:${IMAGE_TAG} -t ${BASE}:latest .
 
-  # 6️⃣ CONTAINER SECURITY SCAN
+          echo "🏗️ Building & pushing tags:"
+          echo " - ${BASE}:${RUN}"
+          echo " - ${BASE}:${SHORT_SHA}"
+          echo " - ${BASE}:latest"
+
+          docker buildx build --push \
+            -t ${BASE}:${RUN} \
+            -t ${BASE}:${SHORT_SHA} \
+            -t ${BASE}:latest .
+
+
   container-scan:
     runs-on: ubuntu-latest
     needs: docker-push
     permissions:
       contents: read
       security-events: write
+      packages: read   # ✅ allow GHCR image access
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # ✅ Login to GHCR to allow Trivy to pull the image
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PAT }}
+      # ✅ Install Trivy
+      - name: Install Trivy
+        uses: aquasecurity/setup-trivy@v0.2.2
+
+      # ✅ Run Trivy scan
+      - name: Run Trivy vulnerability scanner
+        env:
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          # Convert OWNER to lowercase
+          OWNER_LC=$(echo "$OWNER" | tr '[:upper:]' '[:lower:]')
+
+          # Define image name
+          IMAGE_NAME=ghcr.io/${OWNER_LC}/flask-todo-app:${{ github.run_number }}
+          echo "🔍 Scanning image: $IMAGE_NAME"
+
+          # Run Trivy scan (pkg-types replaces deprecated vuln-type)
+          trivy image --exit-code 0 --pkg-types os,library --severity HIGH,CRITICAL --format table $IMAGE_NAME
+  backup-ghcr:
+    runs-on: ubuntu-latest
+    needs: container-scan
+    permissions:
+      contents: write
       packages: read
-    env:
-      OWNER: ${{ github.repository_owner }}
-      SHA: ${{ github.sha }}
-      RUN: ${{ github.run_number }}
 
     steps:
       - name: Checkout code
@@ -184,128 +213,25 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GHCR_PAT }}
 
-      - name: Install Trivy
-        uses: aquasecurity/setup-trivy@v0.2.2
-
-      - name: Run Trivy vulnerability scanner
+      - name: Pull latest GHCR image
+        env:
+          OWNER: ${{ github.repository_owner }}
         run: |
           OWNER_LC=$(echo "$OWNER" | tr '[:upper:]' '[:lower:]')
-          SHORT_SHA=${SHA::7}
-          IMAGE_TAG=${RUN}-${SHORT_SHA}
-          IMAGE_NAME=ghcr.io/${OWNER_LC}/flask-todo-app:${IMAGE_TAG}
-
-          echo "🔍 Scanning image: $IMAGE_NAME"
-          trivy image --exit-code 0 --pkg-types os,library --severity HIGH,CRITICAL --format table $IMAGE_NAME
-
-  # 7️⃣ CLEANUP OLD IMAGES
-  cleanup-old-images:
-    runs-on: ubuntu-latest
-    needs: docker-push
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    permissions:
-      packages: write
-      contents: read
-
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
-
-      - name: Install tools
-        run: sudo apt-get update && sudo apt-get install -y jq curl
-
-      - name: Cleanup old GHCR images via GitHub API
-        env:
-          OWNER: Hyms15
-          PACKAGE: flask-todo-app
-          KEEP: 5
-          TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          echo "Owner: $OWNER  Package: $PACKAGE  Keep: $KEEP"
-
-          if [ "$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $TOKEN" "https://api.github.com/orgs/$OWNER")" = "200" ]; then
-            API_BASE="orgs"
-          else
-            API_BASE="users"
-          fi
-          RESPONSE=$(curl -s -H "Accept: application/vnd.github+json" -H "Authorization: Bearer $TOKEN" \
-            "https://api.github.com/$API_BASE/$OWNER/packages/container/$PACKAGE/versions?per_page=100")
-          TO_DELETE=$(echo "$RESPONSE" | jq -r --argjson keep "$KEEP" 'sort_by(.created_at) | reverse | .[$keep:] | .[].id')
-          if [ -z "$TO_DELETE" ]; then
-            echo "No versions to delete."
-            exit 0
-          fi
-          for id in $TO_DELETE; do
-            echo "Deleting version id: $id"
-            curl -s -X DELETE -H "Authorization: Bearer $TOKEN" \
-              "https://api.github.com/$API_BASE/$OWNER/packages/container/$PACKAGE/versions/$id"
-          done
-          echo "✅ Cleanup finished."
-
-  # 8️⃣ WEBHOOK NOTIFY
-  webhook-notify:
-    runs-on: ubuntu-latest
-    needs: [docker-push, cleanup-old-images]
-    if: success()
-    permissions:
-      contents: read
-
-    env:
-      WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
-      WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
-      REPO: ${{ github.repository }}
-      SHA: ${{ github.sha }}
-      RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-
-    steps:
-      - name: Send webhook notification (signed)
-        run: |
-          set -euo pipefail
-          PAYLOAD=$(printf '{"repo":"%s","sha":"%s","run":"%s","status":"image_pushed"}' "$REPO" "$SHA" "$RUN")
-          SIG=$(printf '%s' "$PAYLOAD" | openssl dgst -sha256 -hmac "$WEBHOOK_SECRET" | sed 's/^.* //')
-          SIG_HEADER="sha256=$SIG"
-          echo "📦 Sending payload: $PAYLOAD"
-          curl -v -X POST \
-            -H "Content-Type: application/json" \
-            -H "X-Hub-Signature-256: $SIG_HEADER" \
-            -d "$PAYLOAD" \
-            "$WEBHOOK_URL"
-          echo "✅ Webhook sent successfully!"
-
-  # 9️⃣ BACKUP GHCR IMAGE
-  backup-ghcr:
-    runs-on: ubuntu-latest
-    needs: [docker-push, cleanup-old-images, webhook-notify]
-    if: success() && github.ref == 'refs/heads/main'
-    permissions:
-      contents: read
-      packages: read
-      actions: write
-
-    steps:
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GHCR_PAT }}
-
-      - name: Pull latest GHCR image
-        run: |
-          OWNER_LC=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
-          BASE=ghcr.io/${OWNER_LC}/flask-todo-app
-          echo "📥 Pulling latest image: ${BASE}:latest"
-          docker pull ${BASE}:latest
+          IMAGE=ghcr.io/${OWNER_LC}/flask-todo-app:latest
+          echo "📦 Pulling image: $IMAGE"
+          docker pull "$IMAGE"
 
       - name: Save image as TAR backup
+        env:
+          OWNER: ${{ github.repository_owner }}
+          RUN_NUMBER: ${{ github.run_number }}
         run: |
-          OWNER_LC=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          set -e
+          OWNER_LC=$(echo "$OWNER" | tr '[:upper:]' '[:lower:]')
           mkdir -p backups
-          docker save ghcr.io/${OWNER_LC}/flask-todo-app:latest -o backups/flask-todo-backup-${{ github.run_number }}.tar
-          echo "✅ Backup file created: backups/flask-todo-backup-${{ github.run_number }}.tar"
-
-      - name: Upload backup to GitHub Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: ghcr-image-backup
-          path: backups/
+          IMAGE=ghcr.io/${OWNER_LC}/flask-todo-app:latest
+          BACKUP_FILE=backups/flask-todo-backup-${RUN_NUMBER}.tar
+          echo "💾 Saving image $IMAGE to $BACKUP_FILE"
+          docker save "$IMAGE" -o "$BACKUP_FILE"
+          echo "✅ Backup file created: $BACKUP_FILE"
