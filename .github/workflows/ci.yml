@@ -311,3 +311,31 @@ jobs:
             "$JIRA_URL/rest/api/3/issue/"
 
           echo "✅ Report sent to Jira."
+    # 9️⃣ SLACK NOTIFICATION
+  notify-slack:
+    runs-on: ubuntu-latest
+    needs: [backup-ghcr]   # or [jira-report] if you have that job
+    if: always()           # ✅ run even if previous jobs fail
+    steps:
+      - name: Send Slack Notification
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          STATUS: ${{ job.status }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          BRANCH: ${{ github.ref_name }}
+          AUTHOR: ${{ github.actor }}
+        run: |
+          STATUS_EMOJI="❌"
+          if [ "$STATUS" = "success" ]; then STATUS_EMOJI="✅"; fi
+          
+          PAYLOAD=$(cat <<EOF
+          {
+            "text": "*${STATUS_EMOJI} CI Pipeline ${STATUS^^}* for <${RUN_URL}|${{ github.repository }}> on branch *${BRANCH}* by *${AUTHOR}*"
+          }
+          EOF
+          )
+
+          curl -X POST -H 'Content-type: application/json' \
+               --data "$PAYLOAD" \
+               "$SLACK_WEBHOOK_URL"
+
