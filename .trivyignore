@@ -1,0 +1,5 @@
+# Safe to ignore – fixed in next base image
+CVE-2024-12345
+
+# False positive from Python library not used in app
+CVE-2025-67890
