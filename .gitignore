@@ -1,6 +1,42 @@
+# ========================
+# Python / Flask
+# ========================
 venv/
 .venv/
 __pycache__/
 *.pyc
 *.db
 .pytest_cache/
+.env
+*.log
+
+# ========================
+# Terraform
+# ========================
+# Local .terraform directories
+.terraform/
+.terraform.lock.hcl
+
+# State files
+*.tfstate
+*.tfstate.backup
+
+# Crash logs
+crash.log
+
+# Ignore provider binaries, zips, and executables
+*.exe
+*.zip
+
+# Sensitive files
+terraform.tfvars
+*.pem
+*.key
+
+# ========================
+# OS / IDE junk
+# ========================
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
